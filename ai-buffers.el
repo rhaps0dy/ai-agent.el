@@ -150,9 +150,11 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
 
     ;; Set marker to the end of the message
     (goto-char (point-max))
-    (insert "\n* Assistant\n")
+    (unless (looking-back "\n" 1)      ; Check if the last character is a newline
+      (insert "\n"))                   ; Insert a newline if the last character is not a newline
+    (insert "* Assistant\n")
     (set-marker ai-agent-conversation-marker (point))
-    (insert "\n* User\n")
+    (insert "\n* User\n") ; User always gets a newline to avoid being in the same line as point.
 
     ;; Collect top-level headers and their contents
     (let* ((messages
