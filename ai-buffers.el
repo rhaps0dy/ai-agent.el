@@ -37,8 +37,11 @@
 
 (defcustom ai-agent-default-system-prompt "You are an AI agent which can interface with the world using Emacs. You are a master programmer. You are happy to help the user achieve what they want, answer any questions and write code.
 
-1. Format your response in org-mode. Code blocks are in `#+begin_src ... #+end_src' blocks, include line numbers, and are tagged with relevant properties.
-2. When the user asks you to edit a file, you should output a diff patch inside the relevant block. Use `:file path/to/file.txt' to indicate which file the diff is for. Paths are relative to the Git project root. Avoid outputting large chunks of the file that won't change, and output only the necessary changes. For example:
+1. Do not format your response in Markdown. In particular, do not include ```org ... ```
+2. Format your response in org-mode instead. This includes *bold*, /italics/, _underline_, =verbatim=, * header1, ** header2, ...
+3. Code blocks are in `#+begin_src ... #+end_src' blocks.
+4. When the user asks you to edit a code block, you should output a diff patch inside the relevant block. Please do
+   /not/ output the whole block again, because it will remain in the conversation history.
 "
   "Default system prompt.
 
@@ -87,11 +90,9 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
     (with-current-buffer buffer
       (org-mode)
       (ai-agent-mode 1)  ; activate mode if not activated yet
-      (unless ai-agent-conversation-marker
-        (setq-local ai-agent-conversation-marker (point-max-marker)))
-      (when (= (marker-position ai-agent-conversation-marker) 1)
+      (when (= (buffer-size) 0)
         (insert (format "* System\n%s\n* User\n" system-prompt))
-        (set-marker ai-agent-conversation-marker (point)))))
+        (setq-local ai-agent-conversation-marker (point-max-marker)))))
   buffer)
 
 (defun ai-agent-focus-new-conversation ()
@@ -116,6 +117,34 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
 
 ;; Bind the toggle function to a key, e.g., F8
 (global-set-key (kbd "<f8>") 'ai-agent-focus-new-conversation)
+
+(defun ai-agent-create-code-prompt (start end)
+  "Create an AI prompt for the selected code region between START and END.
+If there are no AI-agent mode buffers visible, it creates a new one."
+  (interactive "r")
+  (let* ((code (buffer-substring-no-properties start end))
+         (line-start (line-number-at-pos start))
+         (line-numbered-code (with-temp-buffer
+                               (insert code)
+                               (goto-char (point-min))
+                               (let ((line-number line-start))
+                                 (while (not (eobp))
+                                   (insert (format "%d| " line-number))
+                                   (setq line-number (1+ line-number))
+                                   (forward-line 1)))
+                               (buffer-string)))
+         (target-window (or (cl-find-if (lambda (window)
+                                          (with-current-buffer (window-buffer window)
+                                            (bound-and-true-p ai-agent-mode)))
+                                        (window-list))
+                            (ai-agent-focus-new-conversation)))
+         (file-name (file-relative-name
+                     buffer-file-name
+                     (when (fboundp 'projectile-root) (projectile-root)))))
+
+    (with-current-buffer (window-buffer target-window)
+      (goto-char (point-max))
+      (insert (format "#+begin_src emacs-lisp :file %s\n%s#+end_src\n" file-name line-numbered-code)))))
 
 
 (defun ai-agent-interrupt ()
@@ -179,7 +208,9 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
     (unless (looking-back "\n" 1)      ; Check if the last character is a newline
       (insert "\n"))                   ; Insert a newline if the last character is not a newline
     (insert "* Assistant\n")
-    (set-marker ai-agent-conversation-marker (point))
+    (if ai-agent-conversation-marker
+        (set-marker ai-agent-conversation-marker (point))
+      (setq-local ai-agent-conversation-marker (point-marker)))
     (insert "\n* User\n") ; User always gets a newline to avoid being in the same line as point.
 
     ;; Collect top-level headers and their contents
@@ -205,13 +236,11 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
              (json-encode
               `(("messages" . ,messages)
                 ("stream". t)
-                ("model" . "gpt-4o-mini")))
+                ("model" . ,ai-agent-default-model)))
              'utf-8))
            (response-buffer (url-retrieve url
                                           (lambda (_status)
                                             t)
-                                            ;; (with-current-buffer buffer
-                                            ;;   (save-buffer)))
                                           nil t t))
            (proc (get-buffer-process response-buffer)))
 
