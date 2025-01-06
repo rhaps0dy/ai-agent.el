@@ -9,7 +9,7 @@
 ;; Version: 0.0.1
 ;; Keywords: abbrev bib c calendar comm convenience data docs emulations extensions faces files frames games hardware help hypermedia i18n internal languages lisp local maint mail matching mouse multimedia news outlines processes terminals tex tools unix vc wp
 ;; Homepage: https://github.com/rhaps0dy/ai-buffers
-;; Package-Requires: ((emacs "24.3"))
+;; Package-Requires: ((emacs "25.1"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -67,8 +67,9 @@ It should describe the environment and how the AI can interact with it."
   :init-value nil
   :lighter " AI-Agent"
   :keymap (let ((map (make-sparse-keymap)))
-            (define-key map (kbd "C-c a") #'ai-agent-tell)
+            (define-key map (kbd "C-c C-c") #'ai-agent-tell)
             (define-key map (kbd "C-c g") #'ai-agent-interrupt)
+            (define-key map (kbd "C-c i") #'ai-agent-insert-buffer-contents-with-line-numbers)
             map)
   (if ai-agent-mode
       (progn
@@ -118,7 +119,7 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
 ;; Bind the toggle function to a key, e.g., F8
 (global-set-key (kbd "<f8>") 'ai-agent-focus-new-conversation)
 
-(defun ai-agent-create-code-prompt (start end)
+(defun ai-agent-code-prompt-from-region (start end &optional target-buffer)
   "Create an AI prompt for the selected code region between START and END.
 If there are no AI-agent mode buffers visible, it creates a new one."
   (interactive "r")
@@ -133,18 +134,38 @@ If there are no AI-agent mode buffers visible, it creates a new one."
                                    (setq line-number (1+ line-number))
                                    (forward-line 1)))
                                (buffer-string)))
-         (target-window (or (cl-find-if (lambda (window)
-                                          (with-current-buffer (window-buffer window)
-                                            (bound-and-true-p ai-agent-mode)))
-                                        (window-list))
-                            (ai-agent-focus-new-conversation)))
+         (target-buffer (or
+                         target-buffer
+                         (window-buffer (or (cl-find-if (lambda (window)
+                                                          (with-current-buffer (window-buffer window)
+                                                            (bound-and-true-p ai-agent-mode)))
+                                                        (window-list))
+                                            (ai-agent-focus-new-conversation)))))
          (file-name (file-relative-name
                      buffer-file-name
                      (when (fboundp 'projectile-root) (projectile-root)))))
 
-    (with-current-buffer (window-buffer target-window)
+    (with-current-buffer target-buffer
       (goto-char (point-max))
       (insert (format "#+begin_src emacs-lisp :file %s\n%s#+end_src\n" file-name line-numbered-code)))))
+
+;; Bind the toggle function to a key, e.g., F9
+(global-set-key (kbd "<f9>") 'ai-agent-code-prompt-from-region)
+
+
+(defun ai-agent-insert-buffer-contents-with-line-numbers (buffer &optional ai-agent-buffer)
+  "Insert selected buffer contents with line numbers into current buffer in `ai-agent-mode' and fold it."
+  (interactive "bSelect buffer: ")
+  (let* ((ai-agent-buffer (or ai-agent-buffer (current-buffer)))
+         (drawer-marker (with-current-buffer ai-agent-buffer (point-max-marker))))
+
+    (with-current-buffer buffer
+      (ai-agent-code-prompt-from-region (point-min) (point-max) ai-agent-buffer))
+
+    (with-current-buffer ai-agent-buffer
+      (save-excursion
+        (goto-char drawer-marker)
+        (org-cycle)))))
 
 
 (defun ai-agent-interrupt ()
@@ -223,13 +244,13 @@ If there are no AI-agent mode buffers visible, it creates a new one."
                                       ((string-prefix-p "User" header) "user")
                                       ((string-prefix-p "Assistant" header) "assistant")
                                       ((string-prefix-p "System" header) "system")))
-                             (content (org-get-entry)))
+                             (content (encode-coding-string (org-get-entry) 'utf-8 t)))
                         `(("role" . ,prefix) ("content" . ,content))))
                     "LEVEL=1" nil)))
            (url (concat ai-agent-openai-url "/chat/completions"))
            (url-request-method "POST")
            (url-request-extra-headers
-            `(("Content-Type" . "application/json")
+            `(("Content-Type" . "application/json; charset=utf-8")
               ("Authorization" . ,(format "Bearer %s" ai-agent-openai-key))))
            (url-request-data
             (encode-coding-string
@@ -237,13 +258,13 @@ If there are no AI-agent mode buffers visible, it creates a new one."
               `(("messages" . ,messages)
                 ("stream". t)
                 ("model" . ,ai-agent-default-model)))
-             'utf-8))
+             'utf-8 t))
            (response-buffer (url-retrieve url
-                                          (lambda (_status)
-                                            t)
-                                          nil t t))
+                                          (lambda (status)
+                                            (when-let ((error (plist-get status :error)))
+                                              (signal 'error (cdr error)))
+                                            nil t t)))
            (proc (get-buffer-process response-buffer)))
-
       (set-process-coding-system proc 'utf-8 'utf-8)
       (set-process-filter proc (ai-agent--append-streamed-conversation-filter (current-buffer)))
       (pop-to-buffer (current-buffer)))))
