@@ -1,6 +1,22 @@
-;;; ai-agent.el -- An interface to let AIs use Emacs
+;;; ai-buffers.el --- Create and manage buffers for the AI agent -*- lexical-binding: t; -*-
+;;
+;; Copyright (C) 2025 Adrià Garriga-Alonso
+;;
+;; Author: Adrià Garriga-Alonso <adria.garriga@gmail.com>
+;; Maintainer: Adrià Garriga-Alonso <adria.garriga@gmail.com>
+;; Created: January 06, 2025
+;; Modified: January 06, 2025
+;; Version: 0.0.1
+;; Keywords: abbrev bib c calendar comm convenience data docs emulations extensions faces files frames games hardware help hypermedia i18n internal languages lisp local maint mail matching mouse multimedia news outlines processes terminals tex tools unix vc wp
+;; Homepage: https://github.com/rhaps0dy/ai-buffers
+;; Package-Requires: ((emacs "24.3"))
+;;
+;; This file is not part of GNU Emacs.
+;;
 ;;; Commentary:
-;;;
+;;
+;;  Create and manage buffers for the AI agent
+;;
 ;;; Code:
 
 ;; Define custom variables
@@ -33,7 +49,12 @@ It should describe the environment and how the AI can interact with it."
 (defcustom ai-agent-user-name (car (split-string user-full-name " "))
   "Default name for the user."
   :type 'string
-  :group 'openai)
+  :group 'ai-agent)
+
+(defcustom ai-agent-logging-directory (expand-file-name "~/ai-logs/")
+   "Directory where conversation logs will be stored."
+   :type 'directory
+   :group 'ai-agent)
 
 (defvar ai-agent-buffer-prefix "*AI agent*"
   "Prefix for all AI agent conversation buffers.")
@@ -73,11 +94,18 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
         (set-marker ai-agent-conversation-marker (point)))))
   buffer)
 
-(defun ai-agent-toggle ()
+(defun ai-agent-focus-new-conversation ()
   "Toggle the visibility of the sidebar."
   (interactive)
-  (let ((buffer (get-buffer-create ai-agent-buffer-prefix)))
+  (let ((buffer (generate-new-buffer ai-agent-buffer-prefix))
+        (log-file (format "%s/%s.org" ai-agent-logging-directory (format-time-string "%04Y-%02m-%d--%H:%M:%S"))))
+    (unless (file-exists-p ai-agent-logging-directory)
+      (make-directory ai-agent-logging-directory t))
+    (with-current-buffer buffer
+      (set-visited-file-name log-file))
     (ai-agent-new-conversation buffer)
+
+    ;; Now Open the buffer
     (if (get-buffer-window buffer)
         (delete-window (get-buffer-window buffer))
       (progn
@@ -87,7 +115,7 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
         (other-window -1)))))
 
 ;; Bind the toggle function to a key, e.g., F8
-(global-set-key (kbd "<f8>") 'ai-agent-toggle)
+(global-set-key (kbd "<f8>") 'ai-agent-focus-new-conversation)
 
 
 (defun ai-agent-interrupt ()
@@ -120,10 +148,8 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
 
 (defun ai-agent--append-streamed-conversation-filter (buffer)
   "Filter to continue the conversation in BUFFER."
-  (message "Coming for buffer %s" buffer)
   (eval `(lambda (proc string)
            (dolist (line (split-string string "\n" t))
-             (message "Processing line '%s'" line)
 
              ;; Skip HTTP headers (before the first blank line) and [DONE] messages
              (when (and (string-prefix-p "data: " line)
@@ -181,63 +207,18 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
                 ("stream". t)
                 ("model" . "gpt-4o-mini")))
              'utf-8))
-           (response-buffer (url-retrieve url (lambda (_status) t) nil t t))
+           (response-buffer (url-retrieve url
+                                          (lambda (_status)
+                                            t)
+                                            ;; (with-current-buffer buffer
+                                            ;;   (save-buffer)))
+                                          nil t t))
            (proc (get-buffer-process response-buffer)))
 
       (set-process-coding-system proc 'utf-8 'utf-8)
       (set-process-filter proc (ai-agent--append-streamed-conversation-filter (current-buffer)))
       (pop-to-buffer (current-buffer)))))
 
-;; (let ((buf (get-buffer-create "*Function List*")))
-;;   (with-current-buffer buf
-;;     (erase-buffer)
-;;     (mapatoms
-;;      (lambda (sym)
-;;        (when (fboundp sym)
-;;          (condition-case nil  ; Add error handling
-;;              (let* ((doc (documentation sym t))
-;;                     ;; Get first line of doc, or "No documentation" if none
-;;                     (doc-first-line
-;;                      (if doc
-;;                          (car (split-string doc "\n"))
-;;                        "No documentation"))
-;;                     ;; Truncate doc if too long
-;;                     (doc-truncated
-;;                      (if (> (length doc-first-line) 60)
-;;                          (concat (substring doc-first-line 0 57) "...")
-;;                        doc-first-line))
-;;                     (type-str
-;;                      (cond
-;;                       ((special-form-p sym) "Special Form")
-;;                       ((macrop sym) "Macro")
-;;                       ((commandp sym) "Command")
-;;                       ((subrp (symbol-function sym)) "Built-in")
-;;                       (t "Function"))))
-;;                (insert (format "%-30s %-12s %s\n"
-;;                              (symbol-name sym)
-;;                              (format "[%s]" type-str)
-;;                              doc-truncated)))
-;;            (error  ; If any error occurs, just show it's an autoloaded function
-;;             (insert (format "%-30s %-12s %s\n"
-;;                           (symbol-name sym)
-;;                           "[Autoload]"
-;;                           "Not yet loaded"))))))
-;;      obarray)
-;;     (sort-lines nil (point-min) (point-max)))
-;;   (switch-to-buffer buf))
-
-
-;; (defface user-face
-;;   '((((background light)) :foreground "darkred")
-;;     (((background dark)) :foreground "lightred"))
-;;   "A custom face for my specific needs.")
-
-;; (defun my-org-mode-custom-faces ()
-;;   "Add custom faces to `org-mode'."
-;;   (font-lock-add-keywords nil
-;;                           '(("^\\*+ User.*" . 'user-face)
-;;                             ("User>" . 'user-face))
-;;                           'append))
 
 (provide 'ai-buffers)
 ;;; ai-buffers.el ends here
