@@ -1,4 +1,4 @@
-;;; ai-buffers.el --- Create and manage buffers for the AI agent -*- lexical-binding: t; -*-
+;;; ai-agent.el --- Functions for the AI Agent and Emacs to interact -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2025 Adrià Garriga-Alonso
 ;;
@@ -7,17 +7,19 @@
 ;; Created: January 06, 2025
 ;; Modified: January 06, 2025
 ;; Version: 0.0.1
-;; Keywords: abbrev bib c calendar comm convenience data docs emulations extensions faces files frames games hardware help hypermedia i18n internal languages lisp local maint mail matching mouse multimedia news outlines processes terminals tex tools unix vc wp
+;; Keywords: comm extensions
 ;; Homepage: https://github.com/rhaps0dy/ai-buffers
-;; Package-Requires: ((emacs "25.1"))
+;; Package-Requires: ((emacs "25.1") (python "0.28") (org "9.7"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
 ;;; Commentary:
 ;;
-;;  Create and manage buffers for the AI agent
+;;  Functions for the AI Agent and Emacs to interact
 ;;
 ;;; Code:
+(require 'python)
+(require 'org)
 
 ;; Define custom variables
 (defcustom ai-agent-openai-url "https://api.openai.com/v1"
@@ -59,6 +61,64 @@ It should describe the environment and how the AI can interact with it."
    :type 'directory
    :group 'ai-agent)
 
+(defcustom ai-agent-defun-at-point-dispatch-alist
+  '((python-mode . ai-agent-python--defun-at-point-region )
+    (emacs-lisp-mode . ai-agent-emacs-lisp--defun-at-point-region ))
+  "Alist mapping major modes to their respective defun-region functions."
+  :type 'alist
+  :group 'ai-agent)
+
+(defun ai-agent-python--defun-at-point-region ()
+  "Find the region for the Python function at point. Return (START END)."
+  (interactive)
+  (let (start end)
+    (save-excursion
+      (python-nav-beginning-of-defun)
+      (setq start (point))
+      (python-nav-end-of-defun)
+      (setq end (point)))
+    (list start end)))
+
+(defun ai-agent-emacs-lisp--defun-at-point-region ()
+  "Find the region for the Emacs Lisp function at point. Return (START END)."
+  (interactive)
+  (let (start end)
+    (save-excursion
+      (beginning-of-defun)
+      (setq start (point))
+      (end-of-defun)
+      (setq end (point)))
+    (list start end)))
+
+(defcustom ai-agent-statement-at-point-dispatch-alist
+  '((python-mode . ai-agent-python--statement-at-point-region )
+    (emacs-lisp-mode . ai-agent-emacs-lisp--sexp-at-point-region ))
+  "Alist mapping major modes to their respective statement-region functions."
+  :type 'alist
+  :group 'ai-agent)
+
+(defun ai-agent-python--statement-at-point-region ()
+  "Find the region for the Python statement at point. Return (START END)."
+  (interactive)
+  (let (start end)
+    (save-excursion
+      (python-nav-beginning-of-statement)
+      (setq start (point))
+      (python-nav-end-of-statement)
+      (setq end (point)))
+    (list start end)))
+
+(defun ai-agent-emacs-lisp--sexp-at-point-region ()
+  "Find the region for the Emacs Lisp function at point. Return (START END)."
+  (interactive)
+  (let (start end)
+    (save-excursion
+      (backward-sexp)
+      (setq start (point))
+      (forward-sexp)
+      (setq end (point)))
+    (list start end)))
+
 (defvar ai-agent-buffer-prefix "*AI agent*"
   "Prefix for all AI agent conversation buffers.")
 
@@ -96,8 +156,9 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
         (setq-local ai-agent-conversation-marker (point-max-marker)))))
   buffer)
 
+;;;###autoload
 (defun ai-agent-focus-new-conversation ()
-  "Toggle the visibility of the sidebar."
+  "Toggle the visibility of the sidebar. Return the focused or created buffer."
   (interactive)
   (let ((buffer (generate-new-buffer ai-agent-buffer-prefix))
         (log-file (format "%s/%s.org" ai-agent-logging-directory (format-time-string "%04Y-%02m-%d--%H:%M:%S"))))
@@ -114,43 +175,74 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
         (split-window-right)
         (other-window 1)
         (switch-to-buffer buffer)
-        (other-window -1)))))
+        (other-window -1)))
+    buffer))
 
 ;; Bind the toggle function to a key, e.g., F8
 (global-set-key (kbd "<f8>") 'ai-agent-focus-new-conversation)
 
-(defun ai-agent-code-prompt-from-region (start end &optional target-buffer)
+(defun ai-agent-choose-target-buffer ()
+  (let ((open-window (cl-find-if
+                      (lambda (window)
+                        (with-current-buffer (window-buffer window)
+                          (bound-and-true-p ai-agent-mode)))
+                      (window-list))))
+    (if open-window (window-buffer open-window) (ai-agent-focus-new-conversation))))
+
+(defun ai-agent-insert-code-region (start end &optional target-buffer)
   "Create an AI prompt for the selected code region between START and END.
 If there are no AI-agent mode buffers visible, it creates a new one."
   (interactive "r")
   (let* ((code (buffer-substring-no-properties start end))
          (line-start (line-number-at-pos start))
-         (line-numbered-code (with-temp-buffer
-                               (insert code)
-                               (goto-char (point-min))
-                               (let ((line-number line-start))
-                                 (while (not (eobp))
-                                   (insert (format "%d| " line-number))
-                                   (setq line-number (1+ line-number))
-                                   (forward-line 1)))
-                               (buffer-string)))
-         (target-buffer (or
-                         target-buffer
-                         (window-buffer (or (cl-find-if (lambda (window)
-                                                          (with-current-buffer (window-buffer window)
-                                                            (bound-and-true-p ai-agent-mode)))
-                                                        (window-list))
-                                            (ai-agent-focus-new-conversation)))))
-         (file-name (file-relative-name
-                     buffer-file-name
-                     (when (fboundp 'projectile-root) (projectile-root)))))
+         ;; (line-numbered-code (with-temp-buffer
+         ;;                       (insert code)
+         ;;                       (goto-char (point-min))
+         ;;                       (let ((line-number line-start))
+         ;;                         (while (not (eobp))
+         ;;                           (insert (format "%d| " line-number))
+         ;;                           (setq line-number (1+ line-number))
+         ;;                           (forward-line 1)))
+         ;;                       (buffer-string)))
+         (target-buffer (or target-buffer (ai-agent-choose-target-buffer)))
+         (file-name (when buffer-file-name
+                      (file-relative-name
+                       buffer-file-name
+                       (when (fboundp 'projectile-root) (projectile-root)))))
+         (buffer-name (buffer-name (current-buffer)))
+         (major-mode (buffer-local-value 'major-mode (current-buffer)))
+         (code-language (replace-regexp-in-string "-mode\\'" "" (symbol-name major-mode))))
 
     (with-current-buffer target-buffer
       (goto-char (point-max))
-      (insert (format "#+begin_src emacs-lisp :file %s\n%s#+end_src\n" file-name line-numbered-code)))))
+      (insert (format "#+begin_src %s %s\n%s#+end_src\n" code-language
+                      (if file-name
+                          (format ":file %s" file-name)
+                        (format ":buffer %s" buffer-name))
+                      code))))
+  (pulse-momentary-highlight-region start end))
+
+(defun ai-agent-insert-code-defun (&optional target-buffer)
+  "Insert the current function as code in the AI agent session at TARGET-BUFFER."
+  (interactive)
+  (let ((region-function (cdr (assoc major-mode ai-agent-defun-at-point-dispatch-alist))))
+    (if region-function
+        (let ((start-end (funcall region-function)))
+          (ai-agent-insert-code-region (car start-end) (cadr start-end) target-buffer))
+      (error (message "AI agent error: major-mode %s not present in `ai-agent-defun-at-point-dispatch-alist'" major-mode)))))
+
+(defun ai-agent-insert-code-buffer (&optional target-buffer)
+  "Insert the current buffer as code in the AI agent session at TARGET-BUFFER."
+  (interactive)
+  (ai-agent-insert-code-region (point-min) (point-max) target-buffer))
+
+(defun ai-agent-insert-code-last-sexp (&optional target-buffer)
+  "Insert the last statement/sexp as code in the AI agent session at TARGET-BUFFER."
+  (interactive)
+  (ai-agent-insert-code-region (point-min) (point-max) target-buffer))
 
 ;; Bind the toggle function to a key, e.g., F9
-(global-set-key (kbd "<f9>") 'ai-agent-code-prompt-from-region)
+(global-set-key (kbd "<f9>") 'ai-agent-insert-code-region)
 
 
 (defun ai-agent-insert-buffer-contents-with-line-numbers (buffer &optional ai-agent-buffer)
