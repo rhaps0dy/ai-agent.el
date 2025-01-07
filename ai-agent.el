@@ -8,7 +8,7 @@
 ;; Modified: January 06, 2025
 ;; Version: 0.0.1
 ;; Keywords: comm extensions
-;; Homepage: https://github.com/rhaps0dy/ai-buffers
+;; Homepage: https://github.com/rhaps0dy/ai-agent
 ;; Package-Requires: ((emacs "25.1") (python "0.28") (org "9.7"))
 ;;
 ;; This file is not part of GNU Emacs.
@@ -20,6 +20,7 @@
 ;;; Code:
 (require 'python)
 (require 'org)
+(require 'org-element)
 
 ;; Define custom variables
 (defcustom ai-agent-openai-url "https://api.openai.com/v1"
@@ -68,28 +69,6 @@ It should describe the environment and how the AI can interact with it."
   :type 'alist
   :group 'ai-agent)
 
-(defun ai-agent-python--defun-at-point-region ()
-  "Find the region for the Python function at point. Return (START END)."
-  (interactive)
-  (let (start end)
-    (save-excursion
-      (python-nav-beginning-of-defun)
-      (setq start (point))
-      (python-nav-end-of-defun)
-      (setq end (point)))
-    (list start end)))
-
-(defun ai-agent-emacs-lisp--defun-at-point-region ()
-  "Find the region for the Emacs Lisp function at point. Return (START END)."
-  (interactive)
-  (let (start end)
-    (save-excursion
-      (beginning-of-defun)
-      (setq start (point))
-      (end-of-defun)
-      (setq end (point)))
-    (list start end)))
-
 (defcustom ai-agent-statement-at-point-dispatch-alist
   '((python-mode . ai-agent-python--statement-at-point-region )
     (emacs-lisp-mode . ai-agent-emacs-lisp--sexp-at-point-region ))
@@ -97,27 +76,42 @@ It should describe the environment and how the AI can interact with it."
   :type 'alist
   :group 'ai-agent)
 
-(defun ai-agent-python--statement-at-point-region ()
-  "Find the region for the Python statement at point. Return (START END)."
+(defun ai-agent-python--defun-at-point-region ()
+  "Return the region for the Python function at point as a cons cell (START . END)."
   (interactive)
-  (let (start end)
-    (save-excursion
-      (python-nav-beginning-of-statement)
-      (setq start (point))
+  (save-excursion
+    (python-nav-beginning-of-defun)
+    (let ((start (point)))
+      (python-nav-end-of-defun)
+      (cons start (point)))))
+
+(defun ai-agent-emacs-lisp--defun-at-point-region ()
+  "Return the region for the Emacs Lisp function at point as a cons cell (START . END)."
+  (interactive)
+  (save-excursion
+    (beginning-of-defun)
+    (let ((start (point)))
+      (end-of-defun)
+      (cons start (point)))))
+
+(defun ai-agent-python--statement-at-point-region ()
+  "Return the region for the Python statement at point as a cons cell (START . END)."
+  (interactive)
+  (save-excursion
+    (python-nav-beginning-of-statement)
+    (let ((start (point)))
       (python-nav-end-of-statement)
-      (setq end (point)))
-    (list start end)))
+      (cons start (point)))))
 
 (defun ai-agent-emacs-lisp--sexp-at-point-region ()
-  "Find the region for the Emacs Lisp function at point. Return (START END)."
+  "Return the region for the Emacs Lisp s-expression at point as a cons cell (START . END)."
   (interactive)
-  (let (start end)
-    (save-excursion
-      (backward-sexp)
-      (setq start (point))
+  (save-excursion
+    (backward-sexp)
+    (let ((start (point)))
       (forward-sexp)
-      (setq end (point)))
-    (list start end)))
+      (cons start (point)))))
+
 
 (defvar ai-agent-buffer-prefix "*AI agent*"
   "Prefix for all AI agent conversation buffers.")
@@ -136,8 +130,6 @@ It should describe the environment and how the AI can interact with it."
         (setq truncate-lines nil)
         (message "ai-agent-mode enabled in %s" (buffer-name)))
     (message "ai-agent-mode disabled in %s" (buffer-name))))
-
-
 
 (defvar-local ai-agent-conversation-marker nil
   "Where to append conversation at the end of the conversation buffer.")
@@ -222,22 +214,29 @@ If there are no AI-agent mode buffers visible, it creates a new one."
                       code))))
   (pulse-momentary-highlight-region start end))
 
+;;;###autoload
 (defun ai-agent-insert-code-defun (&optional target-buffer)
   "Insert the current function as code in the AI agent session at TARGET-BUFFER."
   (interactive)
   (let ((region-function (cdr (assoc major-mode ai-agent-defun-at-point-dispatch-alist))))
     (if region-function
         (let ((start-end (funcall region-function)))
-          (ai-agent-insert-code-region (car start-end) (cadr start-end) target-buffer))
+          (ai-agent-insert-code-region (car start-end) (cdr start-end) target-buffer))
       (error (message "AI agent error: major-mode %s not present in `ai-agent-defun-at-point-dispatch-alist'" major-mode)))))
 
+;;;###autoload
+(defun ai-agent-insert-statement-defun (&optional target-buffer)
+  "Insert the current statement as code in the AI agent session at TARGET-BUFFER."
+  (interactive)
+  (let ((region-function (cdr (assoc major-mode ai-agent-statement-at-point-dispatch-alist))))
+    (if region-function
+        (let ((start-end (funcall region-function)))
+          (ai-agent-insert-code-region (car start-end) (cdr start-end) target-buffer))
+      (error (message "AI agent error: major-mode %s not present in `ai-agent-statement-at-point-dispatch-alist'" major-mode)))))
+
+;;;###autoload
 (defun ai-agent-insert-code-buffer (&optional target-buffer)
   "Insert the current buffer as code in the AI agent session at TARGET-BUFFER."
-  (interactive)
-  (ai-agent-insert-code-region (point-min) (point-max) target-buffer))
-
-(defun ai-agent-insert-code-last-sexp (&optional target-buffer)
-  "Insert the last statement/sexp as code in the AI agent session at TARGET-BUFFER."
   (interactive)
   (ai-agent-insert-code-region (point-min) (point-max) target-buffer))
 
@@ -309,6 +308,17 @@ If there are no AI-agent mode buffers visible, it creates a new one."
                (ai-agent--insert-at-marker-in-current-buffer (process-mark proc) string))))))
 
 
+(defun ai-agent-code-block-kill ()
+  "Put in `kill-ring' the code from the current #+begin_src ... #+end_src block."
+  (interactive)
+  (save-excursion
+    (let* ((block (org-element-at-point))
+           (start (progn (goto-char (org-element-begin block)) (forward-line) (point)))
+           (end (progn (goto-char (org-element-end block)) (forward-line -2) (point))))
+      (kill-new (buffer-substring start end))
+      (pulse-momentary-highlight-region start end))))
+
+
 (defun ai-agent-tell (&optional buffer)
   "Send to the AI agent the contents of BUFFER (defaults current buffer)."
   (interactive)
@@ -362,5 +372,5 @@ If there are no AI-agent mode buffers visible, it creates a new one."
       (pop-to-buffer (current-buffer)))))
 
 
-(provide 'ai-buffers)
-;;; ai-buffers.el ends here
+(provide 'ai-agent)
+;;; ai-agent.el ends here
