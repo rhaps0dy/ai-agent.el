@@ -123,7 +123,7 @@ It should describe the environment and how the AI can interact with it."
   :keymap (let ((map (make-sparse-keymap)))
             (define-key map (kbd "C-c C-c") #'ai-agent-tell)
             (define-key map (kbd "C-c g") #'ai-agent-interrupt)
-            (define-key map (kbd "C-c i") #'ai-agent-insert-buffer-contents-with-line-numbers)
+            (define-key map (kbd "C-c b") #'ai-agent-insert-buffer-contents-with-line-numbers)
             map)
   (if ai-agent-mode
       (progn
@@ -169,9 +169,6 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
         (switch-to-buffer buffer)
         (other-window -1)))
     buffer))
-
-;; Bind the toggle function to a key, e.g., F8
-(global-set-key (kbd "<f8>") 'ai-agent-focus-new-conversation)
 
 (defun ai-agent-choose-target-buffer ()
   (let ((open-window (cl-find-if
@@ -225,7 +222,7 @@ If there are no AI-agent mode buffers visible, it creates a new one."
       (error (message "AI agent error: major-mode %s not present in `ai-agent-defun-at-point-dispatch-alist'" major-mode)))))
 
 ;;;###autoload
-(defun ai-agent-insert-statement-defun (&optional target-buffer)
+(defun ai-agent-insert-code-statement (&optional target-buffer)
   "Insert the current statement as code in the AI agent session at TARGET-BUFFER."
   (interactive)
   (let ((region-function (cdr (assoc major-mode ai-agent-statement-at-point-dispatch-alist))))
@@ -239,9 +236,6 @@ If there are no AI-agent mode buffers visible, it creates a new one."
   "Insert the current buffer as code in the AI agent session at TARGET-BUFFER."
   (interactive)
   (ai-agent-insert-code-region (point-min) (point-max) target-buffer))
-
-;; Bind the toggle function to a key, e.g., F9
-(global-set-key (kbd "<f9>") 'ai-agent-insert-code-region)
 
 
 (defun ai-agent-insert-buffer-contents-with-line-numbers (buffer &optional ai-agent-buffer)
