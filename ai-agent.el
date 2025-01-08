@@ -282,7 +282,7 @@ If there are no AI-agent mode buffers visible, it creates a new one."
 
 
 (defvar-local ai-agent-active-session-timers nil
-  "Alist of (BUFFER . LAST-TIME) for each active HTTP session in this AI conversation.")
+  "Alist of (BUFFER . LAST-TIME) for each HTTP session in this AI conversation.")
 
 (defvar-local ai-agent-check-timer nil
   "Timer object that kills idle sessions in this AI conversation buffer.")
@@ -309,7 +309,6 @@ If there are no AI-agent mode buffers visible, it creates a new one."
 
 (defun ai-agent--check-idle-sessions (conv-buf)
   "Kill sessions in CONV-BUF that have been idle >10s, and stop timer if no remain."
-  (message "chekcing idle sessions")
   (when (buffer-live-p conv-buf)
     (with-current-buffer conv-buf
       (setq ai-agent-active-session-timers
@@ -317,12 +316,15 @@ If there are no AI-agent mode buffers visible, it creates a new one."
              (lambda (entry)
                (let ((b (car entry))
                      (t0 (cdr entry)))
-                 (message "Buffer %s has time-diff %s" b (- (float-time) t0))
                  (when (and (buffer-live-p b)
                             (> (- (float-time) t0) 10))
                    ;; delete process + buffer
-                   (when (process-live-p (get-buffer-process b))
-                     (delete-process (get-buffer-process b)))
+                   (let ((proc (get-buffer-process b)))
+                     (when (process-live-p proc)
+                       ;; The url-retrieve sentinel has trouble parsing headers, and we don't need them, so we can just
+                       ;; remove it.
+                       (set-process-sentinel proc #'ignore)
+                       (delete-process proc)))
                    (kill-buffer b)
                    t)))       ; remove from list
              ai-agent-active-session-timers))
