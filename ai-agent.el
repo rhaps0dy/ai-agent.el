@@ -281,37 +281,54 @@ If there are no AI-agent mode buffers visible, it creates a new one."
     output))
 
 
-(defun ai-agent--append-streamed-conversation-filter (buffer)
-  "Filter to continue the conversation in BUFFER."
-  (eval `(lambda (proc string)
-           (dolist (line (split-string string "\n" t))
+(defvar-local ai-agent-active-session-timers nil
+  "Alist of (BUFFER . LAST-TIME) for each active HTTP session in this AI conversation.")
 
-             ;; Skip HTTP headers (before the first blank line) and [DONE] messages
-             (when (and (string-prefix-p "data: " line)
-                        (not (string= line "data: [DONE]")))
-               ;; Parse the JSON data
-               (let* ((json-data (json-read-from-string (substring line 6)))
-                      (content (ai-agent--get-json-items json-data 'choices 0 'delta 'content)))
-                 ;; Insert the content if it exists
-                 (when content
-                   (with-current-buffer ,buffer
-                     (ai-agent--insert-at-marker-in-current-buffer ai-agent-conversation-marker content))))))
+(defvar-local ai-agent-check-timer nil
+  "Timer object that kills idle sessions in this AI conversation buffer.")
 
-           (when (buffer-live-p (process-buffer proc))
-             (with-current-buffer (process-buffer proc)
-               (ai-agent--insert-at-marker-in-current-buffer (process-mark proc) string))))))
+(defun ai-agent--append-streamed-conversation-filter (conv-buf)
+  "Return a filter that appends streamed data to CONV-BUF, updating idle times."
+  (lambda (proc string)
+    (dolist (line (split-string string "\n" t))
+      (when (and (string-prefix-p "data: " line)
+                 (not (string= line "data: [DONE]")))
+        (let* ((json-data (json-read-from-string (substring line 6)))
+               (content (ai-agent--get-json-items json-data 'choices 0 'delta 'content)))
+          ;; Insert the content if it exists
+          (when content
+            (with-current-buffer conv-buf
+              ;; Update last activity
+              (setf (alist-get (process-buffer proc) ai-agent-active-session-timers)
+                    (float-time))
+              (ai-agent--insert-at-marker-in-current-buffer ai-agent-conversation-marker content))))))
+    ;; We also store the raw chunk in the response buffer itself
+    (when (buffer-live-p (process-buffer proc))
+      (with-current-buffer (process-buffer proc)
+        (ai-agent--insert-at-marker-in-current-buffer (process-mark proc) string)))))
 
-
-(defun ai-agent-code-block-kill ()
-  "Put in `kill-ring' the code from the current #+begin_src ... #+end_src block."
-  (interactive)
-  (save-excursion
-    (let* ((block (org-element-at-point))
-           (start (progn (goto-char (org-element-begin block)) (forward-line) (point)))
-           (end (progn (goto-char (org-element-end block)) (forward-line -2) (point))))
-      (kill-new (buffer-substring start end))
-      (pulse-momentary-highlight-region start end))))
-
+(defun ai-agent--check-idle-sessions (conv-buf)
+  "Kill sessions in CONV-BUF that have been idle >10s, and stop timer if no remain."
+  (message "chekcing idle sessions")
+  (when (buffer-live-p conv-buf)
+    (with-current-buffer conv-buf
+      (setq ai-agent-active-session-timers
+            (cl-remove-if
+             (lambda (entry)
+               (let ((b (car entry))
+                     (t0 (cdr entry)))
+                 (message "Buffer %s has time-diff %s" b (- (float-time) t0))
+                 (when (and (buffer-live-p b)
+                            (> (- (float-time) t0) 10))
+                   ;; delete process + buffer
+                   (when (process-live-p (get-buffer-process b))
+                     (delete-process (get-buffer-process b)))
+                   (kill-buffer b)
+                   t)))       ; remove from list
+             ai-agent-active-session-timers))
+      (when (null ai-agent-active-session-timers)
+        (cancel-timer ai-agent-check-timer)
+        (setq ai-agent-check-timer nil)))))
 
 (defun ai-agent-tell (&optional buffer)
   "Send to the AI agent the contents of BUFFER (defaults current buffer)."
@@ -320,19 +337,20 @@ If there are no AI-agent mode buffers visible, it creates a new one."
     (unless (bound-and-true-p ai-agent-mode)
       (signal 'ai-agent-no-mode (format "Buffer %s not in `ai-agent-mode'." buffer)))
 
-    ;; Set marker to the end of the message
+    ;; Ensure last line is newline, then insert headings
     (goto-char (point-max))
-    (unless (looking-back "\n" 1)      ; Check if the last character is a newline
-      (insert "\n"))                   ; Insert a newline if the last character is not a newline
+    (unless (looking-back "\n" 1) (insert "\n"))
     (insert "* Assistant\n")
-    (if ai-agent-conversation-marker
-        (set-marker ai-agent-conversation-marker (point))
-      (setq-local ai-agent-conversation-marker (point-marker)))
-    (insert "\n* User\n") ; User always gets a newline to avoid being in the same line as point.
+    (setq-local ai-agent-conversation-marker
+                (or ai-agent-conversation-marker (point-marker)))
+    (set-marker ai-agent-conversation-marker (point))
+    ;; User always gets a newline to avoid being on the same line as the marker.
+    ;; This way the user cursor will advance.
+    (insert "\n* User\n")
 
     ;; Collect top-level headers and their contents
     (let* ((messages
-            (apply 'vector
+            (apply #'vector
                    (org-map-entries
                     (lambda ()
                       (let* ((header (nth 4 (org-heading-components)))
@@ -363,8 +381,16 @@ If there are no AI-agent mode buffers visible, it creates a new one."
            (proc (get-buffer-process response-buffer)))
       (set-process-coding-system proc 'utf-8 'utf-8)
       (set-process-filter proc (ai-agent--append-streamed-conversation-filter (current-buffer)))
-      (pop-to-buffer (current-buffer)))))
 
+      ;; Start timer if needed
+      (unless ai-agent-check-timer
+        (setq ai-agent-check-timer
+              (run-at-time 3 3 #'ai-agent--check-idle-sessions (current-buffer))))
+
+      ;; Add session to the alist
+      (push (cons response-buffer (float-time)) ai-agent-active-session-timers)
+
+      (pop-to-buffer (current-buffer)))))
 
 (provide 'ai-agent)
 ;;; ai-agent.el ends here
