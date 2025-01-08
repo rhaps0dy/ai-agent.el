@@ -12,7 +12,7 @@
    :leader
    (:prefix ("a" . "AI agent")
     :desc "new conversation" "an" #'ai-agent-focus-new-conversation
-    (:prefix ("s" . "insert to agent")
+    (:prefix ("i" . "insert to agent")
      :desc "insert region" "r" #'ai-agent-insert-code-region
      :desc "insert buffer" "b" #'ai-agent-insert-code-buffer
      :desc "insert defun" "f" #'ai-agent-insert-code-defun
