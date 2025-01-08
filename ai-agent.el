@@ -287,8 +287,11 @@ If there are no AI-agent mode buffers visible, it creates a new one."
 (defvar-local ai-agent-check-timer nil
   "Timer object that kills idle sessions in this AI conversation buffer.")
 
+(defvar ai-agent--url-retrieve-sessions-timers 10
+  "`url-retrieve' sessions will be deleted after this many idle seconds.")
+
 (defun ai-agent--append-streamed-conversation-filter (conv-buf)
-  "Return a filter that appends streamed data to CONV-BUF, updating idle times."
+  "Return a filter for to append streamed data to CONV-BUF, updating idle times."
   (lambda (proc string)
     (dolist (line (split-string string "\n" t))
       (when (and (string-prefix-p "data: " line)
@@ -317,7 +320,7 @@ If there are no AI-agent mode buffers visible, it creates a new one."
                (let ((b (car entry))
                      (t0 (cdr entry)))
                  (when (and (buffer-live-p b)
-                            (> (- (float-time) t0) 10))
+                            (> (- (float-time) t0) ai-agent--url-retrieve-sessions-timers))
                    ;; delete process + buffer
                    (let ((proc (get-buffer-process b)))
                      (when (process-live-p proc)
