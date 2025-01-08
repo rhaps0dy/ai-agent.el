@@ -304,7 +304,8 @@ If there are no AI-agent mode buffers visible, it creates a new one."
               ;; Update last activity
               (setf (alist-get (process-buffer proc) ai-agent-active-session-timers)
                     (float-time))
-              (ai-agent--insert-at-marker-in-current-buffer ai-agent-conversation-marker content))))))
+              (ai-agent--insert-at-marker-in-current-buffer ai-agent-conversation-marker
+                                                            (decode-coding-string content 'utf-8)))))))
     ;; We also store the raw chunk in the response buffer itself
     (when (buffer-live-p (process-buffer proc))
       (with-current-buffer (process-buffer proc)
@@ -372,19 +373,16 @@ If there are no AI-agent mode buffers visible, it creates a new one."
             `(("Content-Type" . "application/json; charset=utf-8")
               ("Authorization" . ,(format "Bearer %s" ai-agent-openai-key))))
            (url-request-data
-            (encode-coding-string
              (json-encode
               `(("messages" . ,messages)
-                ("stream". t)
-                ("model" . ,ai-agent-default-model)))
-             'utf-8 t))
+                ("stream" . t)
+                ("model" . ,ai-agent-default-model))))
            (response-buffer (url-retrieve url
                                           (lambda (status)
                                             (when-let ((error (plist-get status :error)))
                                               (signal 'error (cdr error)))
                                             nil t t)))
            (proc (get-buffer-process response-buffer)))
-      (set-process-coding-system proc 'utf-8 'utf-8)
       (set-process-filter proc (ai-agent--append-streamed-conversation-filter (current-buffer)))
 
       ;; Start timer if needed
@@ -396,6 +394,32 @@ If there are no AI-agent mode buffers visible, it creates a new one."
       (push (cons response-buffer (float-time)) ai-agent-active-session-timers)
 
       (pop-to-buffer (current-buffer)))))
+
+(defun ai-agent-chat (model messages callback)
+  "Makes a request to the AI agent using MODEL and MESSAGES.
+The CALLBACK is called with the buffer returned by `url-retrieve`, which is then automatically deleted."
+  (let* ((url (concat ai-agent-openai-url "/chat/completions"))
+         (url-request-method "POST")
+         (url-request-extra-headers
+          `(("Content-Type" . "application/json; charset=utf-8")
+            ("Authorization" . ,(format "Bearer %s" ai-agent-openai-key))))
+         (url-request-data
+          (encode-coding-string
+           (json-encode
+            `(("messages" . ,messages)
+              ("model" . ,model)))
+           'utf-8 t)))
+    (url-retrieve
+     url
+     (lambda (status)
+       (unwind-protect
+           ;; Call the callback function with the response buffer
+           (funcall callback (current-buffer))
+         ;; Ensure the buffer is killed after the callback
+         (kill-buffer (current-buffer)))))))
+
+(ai-agent-chat "gpt-4o-mini" '[(("role" . "system") ("content" . "say sth in emoji please!"))]
+               (lambda (b) (message "%s" (buffer-string))))
 
 (provide 'ai-agent)
 ;;; ai-agent.el ends here
