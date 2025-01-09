@@ -21,6 +21,7 @@
 (require 'python)
 (require 'org)
 (require 'org-element)
+(require 'diff-mode)
 
 ;; Define custom variables
 (defcustom ai-agent-openai-url "https://api.openai.com/v1"
@@ -43,8 +44,32 @@
 1. Do not format your response in Markdown. In particular, do not include ```org ... ```
 2. Format your response in org-mode instead. This includes *bold*, /italics/, _underline_, =verbatim=, * header1, ** header2, ...
 3. Code blocks are in `#+begin_src ... #+end_src' blocks.
-4. When the user asks you to edit a code block, you should output a diff patch inside the relevant block. Please do
-   /not/ output the whole block again, because it will remain in the conversation history.
+4. When the user asks you to edit a code block, you should output a diff patch for the relevant file. For example, if the original code is
+#+begin_src python :file hello.py
+print(\"hello\")
+for i in range(10):
+    print(i)
+#+end_src python
+
+and you want to modify it to
+#+begin_src python :file hello.py
+print(\"hello\")
+for i in range(20):
+    print(i)
+#+end_src python
+
+You should write the following diff:
+#+begin_src diff
+--- a/hello.py
++++ b/hello.py
+@@ -1,3 +1,3 @@
+ print(\"hello\")
+-for i in range(10):
++for i in range(20):
+     print(i)
+#+end_src
+
+Avoid making lots of small diff hunks. Make medium-sized diff hunks.
 "
   "Default system prompt.
 
@@ -244,15 +269,30 @@ If there are no AI-agent mode buffers visible, it creates a new one."
 If nil, insert to the last buffer in `ai-agent-mode' instead."
   (interactive "bSelect buffer: ")
   (let* ((ai-agent-buffer (or ai-agent-buffer (current-buffer)))
-         (drawer-marker (with-current-buffer ai-agent-buffer (point-max-marker))))
+         (drawer-char (with-current-buffer ai-agent-buffer (point-max))))
 
     (with-current-buffer src-buffer
       (ai-agent-insert-code-buffer ai-agent-buffer))
 
     (with-current-buffer ai-agent-buffer
       (save-excursion
-        (goto-char drawer-marker)
+        (goto-char drawer-char)
         (org-cycle)))))
+
+(defun ai-agent-kill-src-block-at-point ()
+  "Copy the #+begin_src ... #+end_src block at current point."
+  (interactive)
+  (let* ((elem (org-element-at-point))
+         (beg (save-excursion
+                (goto-char (org-element-begin elem))
+                (forward-line 1)
+                (point)))
+         (end (save-excursion
+                (goto-char (org-element-end elem))
+                (forward-line -1)
+                (point))))
+  (copy-region-as-kill beg end)
+  (pulse-momentary-highlight-region beg end)))
 
 
 (defun ai-agent-interrupt ()
@@ -427,6 +467,36 @@ The CALLBACK is called with the buffer returned by `url-retrieve`, which is then
 
 ;; (ai-agent-chat "gpt-4o-mini" '[(("role" . "system") ("content" . "say sth in emoji please!🌅🐚🏠"))]
 ;;                (lambda (b) (message "%s" (decode-coding-string (buffer-string) 'utf-8))))
+
+(defun ai-agent-count-lines-beginning-with-char (char start end)
+  "Count lines beginning with CHAR between START and END."
+  (interactive "cCharacter:\nr")
+  (count-matches (format "^%c" char) start end))
+
+(defun ai-agent-fix-diff-hunk-at-point ()
+  "Process a diff hunk to gather information and prepare for application."
+  (interactive)
+  (let* ((start (diff-beginning-of-hunk t))
+         (end (diff-end-of-hunk t))
+         (target-line
+          (save-excursion
+            (goto-char start)
+            (when (re-search-forward "^@@ -\\([0-9]+\\),[0-9]+ +\\+[0-9]+,[0-9]+ @@" end t)
+              (match-string 1))))
+         (total-line-count (count-matches "^.*" start end))
+         (add-line-count (count-matches "^\\+.*" start end))
+         (del-line-count (count-matches "^\\-.*" start end))
+         (before-line-count (- (- total-line-count add-line-count) 2))
+         (after-line-count (- (- total-line-count del-line-count) 2))
+         (new-hunk-info (format "@@ -%s,%s +%s,%s @@" target-line before-line-count target-line after-line-count)))
+    (save-excursion
+      (goto-char start)
+      (delete-region start (line-end-position))
+      (insert new-hunk-info))))
+
+
+; total -1 - minuses -> total -1 -pluses
+;(count-lines-beginning-with-char ?+ (diff-beginning-of-hunk t) (diff-end-of-hunk t))
 
 (provide 'ai-agent)
 ;;; ai-agent.el ends here
