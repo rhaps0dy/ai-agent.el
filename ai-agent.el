@@ -23,21 +23,58 @@
 (require 'org-element)
 (require 'diff-mode)
 
-;; Define custom variables
-(defcustom ai-agent-openai-url "https://api.openai.com/v1"
-  "Base URL for an OpenAI-compatible API."
-  :type 'string
-  :group 'ai-agent)
-
-(defcustom ai-agent-openai-key (or (getenv "OPENAI_API_KEY") "")
-  "Key for the OpenAI API."
-  :type 'string
-  :group 'ai-agent)
-
 (defcustom ai-agent-default-model "gpt-4o"
   "The model to use by default when asking questions."
   :type 'string
   :group 'ai-agent)
+
+(defcustom ai-agent-model-provider-alist
+  `((openai
+     (url . "https://api.openai.com/v1")
+     (key . ,(or (getenv "OPENAI_API_KEY") ""))
+     (models . ((gpt-4o . "gpt-4o") (o1 . "o1")))
+     (api-style . openai))
+    (anthropic
+     (url . "https://api.anthropic.com/v1")
+     (key . ,(or (getenv "ANTHROPIC_API_KEY") ""))
+     (models . ((claude-3-5-sonnet . "claude-3-5-sonnet-20241022")))
+     (api-style . anthropic)))
+  "Alist of model providers with their configurations."
+  :type 'alist
+  :group 'ai-agent)
+
+(defvar ai-agent--current-model 'gpt-4o
+  "The current AI model being used.")
+
+(defvar ai-agent--current-provider 'openai
+  "The current provider of the AI model being used.")
+
+(defun ai-agent-select-model ()
+  "Interactively select an AI model and set the current provider and model.
+Errors if duplicate model symbols are found."
+  (interactive)
+  ;; Build a list of all model symbols, ensuring no duplicates
+  (let ((model-choices '())
+        (model-symbol-map (make-hash-table :test 'equal)))
+    ;; Iterate over providers
+    (dolist (provider ai-agent-model-provider-alist)
+      (let ((provider-name (car provider))
+            (models (cdr (assoc 'models (cdr provider)))))
+        ;; Iterate over models for each provider
+        (dolist (model models)
+          (let ((model-symbol (car model)))
+            (if (gethash model-symbol model-symbol-map)
+                (error "Duplicate model symbol found: %s" model-symbol)
+              (push model-symbol model-choices)
+              (puthash model-symbol provider-name model-symbol-map))))))
+    ;; Ask user to choose a model
+    (let* ((choice (completing-read "Select AI model: " model-choices))
+           (chosen-symbol (intern choice)))
+      ;; Set the current model and provider based on choice
+      (setq ai-agent--current-model chosen-symbol)
+      (setq ai-agent--current-provider (gethash chosen-symbol model-symbol-map))
+      (message "Selected model: %s, provider: %s"
+               ai-agent--current-model ai-agent--current-provider))))
 
 ; we avoid putting #+end_src at the beginning of line in this file so it gets escaped.
 (defcustom ai-agent-default-system-prompt "You are an AI agent which can interface with the world using Emacs. You are a master programmer. You are happy to help the user achieve what they want, answer any questions and write code.
