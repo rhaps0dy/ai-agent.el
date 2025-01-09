@@ -9,6 +9,7 @@
    :desc "interrupt generation" "g" #'ai-agent-interrupt
    :desc "insert from buffer" "b" #'ai-agent-insert-buffer-contents-with-line-numbers
    :desc "copy src block" "y" #'ai-agent-kill-src-block-at-point
+   :desc "mark src block" "m" #'ai-agent-kill-select-block-at-point
    :desc "fix hunk" "h" #'ai-agent-fix-diff-hunk-at-point)
   (map!
    :leader

@@ -39,6 +39,7 @@
   :type 'string
   :group 'ai-agent)
 
+; we avoid putting #+end_src at the beginning of line in this file so it gets escaped.
 (defcustom ai-agent-default-system-prompt "You are an AI agent which can interface with the world using Emacs. You are a master programmer. You are happy to help the user achieve what they want, answer any questions and write code.
 
 1. Do not format your response in Markdown. In particular, do not include ```org ... ```
@@ -49,14 +50,13 @@
 print(\"hello\")
 for i in range(10):
     print(i)
-#+end_src python
+#+end_src
 
 and you want to modify it to
 #+begin_src python :file hello.py
 print(\"hello\")
 for i in range(20):
-    print(i)
-#+end_src python
+    print(i)\n#+end_src
 
 You should write the following diff:
 #+begin_src diff
@@ -66,8 +66,7 @@ You should write the following diff:
  print(\"hello\")
 -for i in range(10):
 +for i in range(20):
-     print(i)
-#+end_src
+     print(i)\n#+end_src
 
 Avoid making lots of small diff hunks. Make medium-sized diff hunks.
 "
@@ -173,18 +172,20 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
         (setq-local ai-agent-conversation-marker (point-max-marker)))))
   buffer)
 
+(defun ai-agent-rename-conversation-buffer (buffer new-name)
+  "Rename BUFFER to NEW-NAME."
+  (let* ((datetime (format-time-string "%04Y-%02m-%d %H:%M:%S"))
+         (new-name (if new-name (format "%s %s" datetime new-name) datetime))
+         (log-file (format "%s/%s.org" ai-agent-logging-directory new-name)))
+    (make-directory ai-agent-logging-directory t)
+    (with-current-buffer buffer
+      (set-visited-file-name log-file nil t))))
+
 ;;;###autoload
 (defun ai-agent-focus-new-conversation ()
   "Toggle the visibility of the sidebar. Return the focused or created buffer."
   (interactive)
-  (let ((buffer (generate-new-buffer ai-agent-buffer-prefix))
-        (log-file (format "%s/%s.org" ai-agent-logging-directory (format-time-string "%04Y-%02m-%d--%H:%M:%S"))))
-    (unless (file-exists-p ai-agent-logging-directory)
-      (make-directory ai-agent-logging-directory t))
-    (with-current-buffer buffer
-      (set-visited-file-name log-file))
-    (ai-agent-new-conversation buffer)
-
+  (let ((buffer (ai-agent-new-conversation (generate-new-buffer "*AI conversation*"))))
     ;; Now Open the buffer
     (if (get-buffer-window buffer)
         (delete-window (get-buffer-window buffer))
@@ -207,8 +208,9 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
   "Create an AI prompt for the selected code region between START and END.
 If there are no AI-agent mode buffers visible, it creates a new one."
   (interactive "r")
-  (let* ((code (buffer-substring-no-properties start end))
-         (line-start (line-number-at-pos start))
+  (let* ((unescaped-code (buffer-substring-no-properties start end))
+         (code (replace-regexp-in-string "^#\\+[Ee][Nn][Dd]_[Ss][Rr][Cc]" ",#+end_src" unescaped-code))
+         ;; (line-start (line-number-at-pos start))
          ;; (line-numbered-code (with-temp-buffer
          ;;                       (insert code)
          ;;                       (goto-char (point-min))
@@ -293,6 +295,16 @@ If nil, insert to the last buffer in `ai-agent-mode' instead."
                 (point))))
   (copy-region-as-kill beg end)
   (pulse-momentary-highlight-region beg end)))
+
+(defun ai-agent-kill-select-block-at-point ()
+  "Copy the #+begin_src ... #+end_src block at current point."
+  (interactive)
+  (let* ((elem (org-element-at-point)))
+    (goto-char (org-element-end elem))
+    (forward-line -1)
+    (set-mark (point))
+    (goto-char (org-element-begin elem))
+    (forward-line 1)))
 
 
 (defun ai-agent-interrupt ()
@@ -429,8 +441,13 @@ If nil, insert to the last buffer in `ai-agent-mode' instead."
                                             (when-let ((error (plist-get status :error)))
                                               (signal 'error (cdr error)))
                                             nil t t)))
-           (proc (get-buffer-process response-buffer)))
-      (set-process-filter proc (ai-agent--append-streamed-conversation-filter (current-buffer)))
+           (proc (get-buffer-process response-buffer))
+           (conv-buf (current-buffer)))
+      (set-process-filter proc (ai-agent--append-streamed-conversation-filter conv-buf))
+
+      ;; After the first message, rename conversation
+      (when (< (length messages) 3)
+        (ai-agent-rename-buffer-from-summary conv-buf messages))
 
       ;; Start timer if needed
       (unless ai-agent-check-timer
@@ -441,6 +458,24 @@ If nil, insert to the last buffer in `ai-agent-mode' instead."
       (push (cons response-buffer (float-time)) ai-agent-active-session-timers)
 
       (pop-to-buffer (current-buffer)))))
+
+(defun ai-agent-rename-buffer-from-summary (conv-buf messages)
+  "Rename the CONV-BUF conversation based on the content of MESSAGES."
+  (let* ((conversation
+          (mapconcat
+           (lambda (message)
+             (let ((role (alist-get "role" message "" nil #'equal))
+                   (content (alist-get "content" message "" nil #'equal)))
+               (format "<%s>\n%s</%s>\n" role content role)))
+           messages)))
+    (ai-agent-chat
+     "gpt-4o"
+     `[(("role" . "system") ("content" . "Please describe the request made in the following conversation, in 1-5 words."))
+       (("role" . "user") ("content" . ,(format "The conversation: %s" conversation)))]
+     (lambda (new-name)
+       (ai-agent-rename-conversation-buffer
+        conv-buf
+        (replace-regexp-in-string "[.,/]" "" new-name))))))
 
 (defun ai-agent-chat (model messages callback)
   "Make a request to the AI agent using MODEL and MESSAGES.
