@@ -443,7 +443,7 @@ If nil, insert to the last buffer in `ai-agent-mode' instead."
       (pop-to-buffer (current-buffer)))))
 
 (defun ai-agent-chat (model messages callback)
-  "Makes a request to the AI agent using MODEL and MESSAGES.
+  "Make a request to the AI agent using MODEL and MESSAGES.
 The CALLBACK is called with the buffer returned by `url-retrieve`, which is then automatically deleted."
   (let* ((url (concat ai-agent-openai-url "/chat/completions"))
          (url-request-method "POST")
@@ -460,13 +460,16 @@ The CALLBACK is called with the buffer returned by `url-retrieve`, which is then
      url
      (lambda (status)
        (unwind-protect
-           ;; Call the callback function with the response buffer
-           (funcall callback (current-buffer))
-         ;; Ensure the buffer is killed after the callback
+           (if (plist-get status :error)
+               (error "Error retrieving URL: %s"
+                      (plist-get status :error))
+             (goto-char (point-min))
+             (re-search-forward "\n\n")
+             (let* ((json-data (json-read-from-string
+                                (buffer-substring-no-properties (point) (point-max))))
+                    (content (ai-agent--get-json-items json-data 'choices 0 'message 'content)))
+               (funcall callback (decode-coding-string content 'utf-8))))
          (kill-buffer (current-buffer)))))))
-
-;; (ai-agent-chat "gpt-4o-mini" '[(("role" . "system") ("content" . "say sth in emoji please!🌅🐚🏠"))]
-;;                (lambda (b) (message "%s" (decode-coding-string (buffer-string) 'utf-8))))
 
 (defun ai-agent-count-lines-beginning-with-char (char start end)
   "Count lines beginning with CHAR between START and END."
