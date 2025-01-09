@@ -293,6 +293,7 @@ If there are no AI-agent mode buffers visible, it creates a new one."
 (defun ai-agent--append-streamed-conversation-filter (conv-buf)
   "Return a filter for to append streamed data to CONV-BUF, updating idle times."
   (lambda (proc string)
+    ;; TODO: deal with data: {...} messages that split unicode characters in half.
     (dolist (line (split-string string "\n" t))
       (when (and (string-prefix-p "data: " line)
                  (not (string= line "data: [DONE]")))
@@ -364,19 +365,23 @@ If there are no AI-agent mode buffers visible, it creates a new one."
                                       ((string-prefix-p "User" header) "user")
                                       ((string-prefix-p "Assistant" header) "assistant")
                                       ((string-prefix-p "System" header) "system")))
-                             (content (encode-coding-string (org-get-entry) 'utf-8 t)))
+                             (content (org-get-entry)))
                         `(("role" . ,prefix) ("content" . ,content))))
                     "LEVEL=1" nil)))
            (url (concat ai-agent-openai-url "/chat/completions"))
            (url-request-method "POST")
            (url-request-extra-headers
             `(("Content-Type" . "application/json; charset=utf-8")
-              ("Authorization" . ,(format "Bearer %s" ai-agent-openai-key))))
+              ;; Mysteriously we need to manually re-encode the openai key in ascii, otherwise when concatenated with the rest
+              ;; of the request the string becomes multi-byte.
+              ("Authorization" . ,(format "Bearer %s" (encode-coding-string ai-agent-openai-key 'ascii)))))
            (url-request-data
-             (json-encode
+            (encode-coding-string
+              (json-encode
               `(("messages" . ,messages)
                 ("stream" . t)
-                ("model" . ,ai-agent-default-model))))
+                ("model" . ,ai-agent-default-model)))
+              'utf-8 t))
            (response-buffer (url-retrieve url
                                           (lambda (status)
                                             (when-let ((error (plist-get status :error)))
@@ -402,7 +407,7 @@ The CALLBACK is called with the buffer returned by `url-retrieve`, which is then
          (url-request-method "POST")
          (url-request-extra-headers
           `(("Content-Type" . "application/json; charset=utf-8")
-            ("Authorization" . ,(format "Bearer %s" ai-agent-openai-key))))
+            ("Authorization" . ,(format "Bearer %s" (encode-coding-string ai-agent-openai-key 'ascii)))))
          (url-request-data
           (encode-coding-string
            (json-encode
@@ -418,8 +423,8 @@ The CALLBACK is called with the buffer returned by `url-retrieve`, which is then
          ;; Ensure the buffer is killed after the callback
          (kill-buffer (current-buffer)))))))
 
-(ai-agent-chat "gpt-4o-mini" '[(("role" . "system") ("content" . "say sth in emoji please!"))]
-               (lambda (b) (message "%s" (buffer-string))))
+;; (ai-agent-chat "gpt-4o-mini" '[(("role" . "system") ("content" . "say sth in emoji please!🌅🐚🏠"))]
+;;                (lambda (b) (message "%s" (decode-coding-string (buffer-string) 'utf-8))))
 
 (provide 'ai-agent)
 ;;; ai-agent.el ends here
