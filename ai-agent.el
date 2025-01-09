@@ -217,8 +217,8 @@ If there are no AI-agent mode buffers visible, it creates a new one."
   (interactive)
   (let ((region-function (cdr (assoc major-mode ai-agent-defun-at-point-dispatch-alist))))
     (if region-function
-        (let ((start-end (funcall region-function)))
-          (ai-agent-insert-code-region (car start-end) (cdr start-end) target-buffer))
+        (pcase-let ((`(,start ,end) (funcall region-function)))
+          (ai-agent-insert-code-region start end target-buffer))
       (error (message "AI agent error: major-mode %s not present in `ai-agent-defun-at-point-dispatch-alist'" major-mode)))))
 
 ;;;###autoload
@@ -227,8 +227,8 @@ If there are no AI-agent mode buffers visible, it creates a new one."
   (interactive)
   (let ((region-function (cdr (assoc major-mode ai-agent-statement-at-point-dispatch-alist))))
     (if region-function
-        (let ((start-end (funcall region-function)))
-          (ai-agent-insert-code-region (car start-end) (cdr start-end) target-buffer))
+        (pcase-let ((`(,start ,end) (funcall region-function)))
+          (ai-agent-insert-code-region start end target-buffer))
       (error (message "AI agent error: major-mode %s not present in `ai-agent-statement-at-point-dispatch-alist'" major-mode)))))
 
 ;;;###autoload
@@ -238,14 +238,16 @@ If there are no AI-agent mode buffers visible, it creates a new one."
   (ai-agent-insert-code-region (point-min) (point-max) target-buffer))
 
 
-(defun ai-agent-insert-buffer-contents-with-line-numbers (buffer &optional ai-agent-buffer)
-  "Insert selected buffer contents with line numbers into current buffer in `ai-agent-mode' and fold it."
+(defun ai-agent-insert-buffer-contents-with-line-numbers (src-buffer &optional ai-agent-buffer)
+  "Insert SRC-BUFFER contents as code into AI-AGENT-BUFFER and fold it.
+
+If nil, insert to the last buffer in `ai-agent-mode' instead."
   (interactive "bSelect buffer: ")
   (let* ((ai-agent-buffer (or ai-agent-buffer (current-buffer)))
          (drawer-marker (with-current-buffer ai-agent-buffer (point-max-marker))))
 
-    (with-current-buffer buffer
-      (ai-agent-code-prompt-from-region (point-min) (point-max) ai-agent-buffer))
+    (with-current-buffer src-buffer
+      (ai-agent-insert-code-buffer ai-agent-buffer))
 
     (with-current-buffer ai-agent-buffer
       (save-excursion
