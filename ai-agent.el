@@ -477,11 +477,14 @@ The CALLBACK is called with the buffer returned by `url-retrieve`, which is then
   "Process a diff hunk to gather information and prepare for application."
   (interactive)
   (let* ((start (diff-beginning-of-hunk t))
-         (end (diff-end-of-hunk t))
+         (end (save-excursion
+                (goto-char start)
+                (forward-line 1)
+                (re-search-forward "^\\(@@ \\|--- \\|#\\+end_src\\)" (point-max))))
          (target-line
           (save-excursion
             (goto-char start)
-            (when (re-search-forward "^@@ -\\([0-9]+\\),[0-9]+ +\\+[0-9]+,[0-9]+ @@" end t)
+            (when (re-search-forward "^@@ -\\([0-9]+\\)[0-9,]* \\+[0-9,]* @@$" end t)
               (match-string 1))))
          (total-line-count (count-matches "^.*" start end))
          (add-line-count (count-matches "^\\+.*" start end))
@@ -494,9 +497,6 @@ The CALLBACK is called with the buffer returned by `url-retrieve`, which is then
       (delete-region start (line-end-position))
       (insert new-hunk-info))))
 
-
-; total -1 - minuses -> total -1 -pluses
-;(count-lines-beginning-with-char ?+ (diff-beginning-of-hunk t) (diff-end-of-hunk t))
 
 (provide 'ai-agent)
 ;;; ai-agent.el ends here
