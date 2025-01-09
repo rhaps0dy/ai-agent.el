@@ -58,9 +58,9 @@ It should describe the environment and how the AI can interact with it."
   :group 'ai-agent)
 
 (defcustom ai-agent-logging-directory (expand-file-name "~/ai-logs/")
-   "Directory where conversation logs will be stored."
-   :type 'directory
-   :group 'ai-agent)
+  "Directory where conversation logs will be stored."
+  :type 'directory
+  :group 'ai-agent)
 
 (defcustom ai-agent-defun-at-point-dispatch-alist
   '((python-mode . ai-agent-python--defun-at-point-region )
@@ -266,10 +266,10 @@ If there are no AI-agent mode buffers visible, it creates a new one."
 
 (defun ai-agent--insert-at-marker-in-current-buffer (marker content)
   "Insert CONTENT at MARKER in current buffer, moving point if necessary."
-    (save-excursion
-      (goto-char marker)
-      (insert content)
-      (set-marker marker (point))))
+  (save-excursion
+    (goto-char marker)
+    (insert content)
+    (set-marker marker (point))))
 
 (defun ai-agent--get-json-items (obj &rest keys)
   "Gets keys or list indices KEYS from OBJ in sequence."
@@ -377,11 +377,11 @@ If there are no AI-agent mode buffers visible, it creates a new one."
               ("Authorization" . ,(format "Bearer %s" (encode-coding-string ai-agent-openai-key 'ascii)))))
            (url-request-data
             (encode-coding-string
-              (json-encode
+             (json-encode
               `(("messages" . ,messages)
                 ("stream" . t)
                 ("model" . ,ai-agent-default-model)))
-              'utf-8 t))
+             'utf-8 t))
            (response-buffer (url-retrieve url
                                           (lambda (status)
                                             (when-let ((error (plist-get status :error)))
