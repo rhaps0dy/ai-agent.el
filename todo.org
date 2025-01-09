@@ -1,18 +1,21 @@
 #+title: TODO items for Emacs AI Agent
 
+* TODO
 - [-] Make it possible to have several 'sessions'. To each of them a buffer like the sidebar buffer corresponds
   - [ ] When called interactively, user functions apply only to one main User session
   - [ ] except when called in a particular session's buffer. Then it's for that buffer.
   - [X] There's a mark at the end of the session that
-- [X] url-request buffers should be deleted when they've been dumped
-- [X] The session buffer should have "User:\n", "Assistant:\n" and "Tool:\n" headers prefixing each message. These should be
-  font-locked to particular colors. Names and colors customizable.
-- [X] The session buffer is in org-mode.
-- [ ] Files or buffers can be included in the conversation. They get included with line-numbers. Agents can edit the
-  file (or buffer) by the command "replace lines 11 to 20", "Add at line 15", "Delete lines 2-30".
-  - [ ] LLMs probably find it easiest to replace large chunks. Put that in the prompt.
 
 - [-] user can freely edit the session, and call an "agent-interact" function. The agent then responds with text and/or tool
   use. Tools are just Emacs Lisp calls wrapped in a #+begin_src tool-use ... #+end_src
   - [ ] Since Agents can access all Emacs Lisp functions, they can also freely edit the buffer, and call themselves recursively
   - [X] All interactions are logged to a particular user directory.
+
+* DONE
+- [X] url-request buffers should be deleted when they've been dumped
+- [X] The session buffer should have "User:\n", "Assistant:\n" and "Tool:\n" headers prefixing each message. These should be
+  font-locked to particular colors. Names and colors customizable.
+- [X] The session buffer is in org-mode.
+- [X] Files or buffers can be included in the conversation. They get included with line-numbers. Agents can edit the
+  file (or buffer) by the command "replace lines 11 to 20", "Add at line 15", "Delete lines 2-30".
+  - [X] LLMs probably find it easiest to replace large chunks. Put that in the prompt.
