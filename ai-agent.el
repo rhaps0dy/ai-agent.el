@@ -42,33 +42,50 @@
 ; we avoid putting #+end_src at the beginning of line in this file so it gets escaped.
 (defcustom ai-agent-default-system-prompt "You are an AI agent which can interface with the world using Emacs. You are a master programmer. You are happy to help the user achieve what they want, answer any questions and write code.
 
-1. Do not format your response in Markdown. In particular, do not include ```org ... ```
+1. Do not format your response in Markdown. You must not use ```python ... ``` or ```emacs-lisp ... ``` for code blocks. Use #+begin_src ... #+end_src for code blocks instead.
 2. Format your response in org-mode instead. This includes *bold*, /italics/, _underline_, =verbatim=, * header1, ** header2, ...
-3. Code blocks are in `#+begin_src ... #+end_src' blocks.
-4. When the user asks you to edit a code block, you should output a diff patch for the relevant file. For example, if the original code is
+3. To edit a code block, you can either write out the new version, or use the diff editor. For example, given an existing =hello.py= block that looks like this:
 #+begin_src python :file hello.py
 print(\"hello\")
 for i in range(10):
-    print(i)
-#+end_src
-
-and you want to modify it to
-#+begin_src python :file hello.py
-print(\"hello\")
-for i in range(20):
     print(i)\n#+end_src
 
-You should write the following diff:
-#+begin_src diff
---- a/hello.py
-+++ b/hello.py
-@@ -1,3 +1,3 @@
- print(\"hello\")
--for i in range(10):
-+for i in range(20):
-     print(i)\n#+end_src
+You can write out the new version directly:
 
-Avoid making lots of small diff hunks. Make medium-sized diff hunks.
+#+begin_src python :file hello.py
+print(\"hello\")
+for j in range(20):
+    print(j)\n#+end_src
+
+You can also write a Git-style diff, with OLD_CODE first and NEW_CODE afterwards.  The OLD_CODE must be reproduced exactly, including whitespace, and must have sufficient context to be unique in the file. For example:
+#+begin_src python
+print(\"hello\")
+<<<<<<<
+for i in range(10):
+    print(i)
+=======
+for j in range(20):
+    print(j)
+>>>>>>>\n#+end_src
+
+You can also include several Git-style diffs in a single block. For example:
+#+begin_src python
+def impala_loss(
+    params: Any,
+    get_logits_and_value: GetLogitsAndValueFn,
+    args: ImpalaLossConfig,
+<<<<<<<
+    batch: Rollout,
+=======
+    minibatch: Rollout,
+>>>>>>>
+) -> tuple[jax.Array, dict[str, jax.Array]]:
+<<<<<<<
+    done_t = batch.episode_starts_t[1:]
+=======
+    done_t = minibatch.episode_starts_t[1:]
+>>>>>>>
+    discount_t = (~done_t) * args.gamma\n#+end_src
 "
   "Default system prompt.
 
@@ -333,61 +350,33 @@ If nil, insert to the last buffer in `ai-agent-mode' instead."
     output))
 
 
-(defvar-local ai-agent-active-session-timers nil
-  "Alist of (BUFFER . LAST-TIME) for each HTTP session in this AI conversation.")
-
-(defvar-local ai-agent-check-timer nil
-  "Timer object that kills idle sessions in this AI conversation buffer.")
-
-(defvar ai-agent--url-retrieve-sessions-timers 10
-  "`url-retrieve' sessions will be deleted after this many idle seconds.")
-
 (defun ai-agent--append-streamed-conversation-filter (conv-buf)
   "Return a filter for to append streamed data to CONV-BUF, updating idle times."
   (lambda (proc string)
     ;; TODO: deal with data: {...} messages that split unicode characters in half.
     (dolist (line (split-string string "\n" t))
-      (when (and (string-prefix-p "data: " line)
-                 (not (string= line "data: [DONE]")))
-        (let* ((json-data (json-read-from-string (substring line 6)))
-               (content (ai-agent--get-json-items json-data 'choices 0 'delta 'content)))
-          ;; Insert the content if it exists
-          (when content
-            (with-current-buffer conv-buf
-              ;; Update last activity
-              (setf (alist-get (process-buffer proc) ai-agent-active-session-timers)
-                    (float-time))
-              (ai-agent--insert-at-marker-in-current-buffer ai-agent-conversation-marker
-                                                            (decode-coding-string content 'utf-8)))))))
+      (when (string-prefix-p "data: " line)
+        (if (string-prefix-p "data: [DONE]" line)
+            (progn
+              ;; Close the process and kill the buffer
+              (when (process-live-p proc)
+                (delete-process proc))
+              (when (buffer-live-p (process-buffer proc))
+                (kill-buffer (process-buffer proc))))
+          (let* ((json-data (json-read-from-string (substring line 6)))
+                 (content (ai-agent--get-json-items json-data 'choices 0 'delta 'content)))
+            ;; Insert the content if it exists
+            (when content
+              (with-current-buffer conv-buf
+                ;; Update last activity
+                (setf (alist-get (process-buffer proc) ai-agent-active-session-timers)
+                      (float-time))
+                (ai-agent--insert-at-marker-in-current-buffer ai-agent-conversation-marker
+                                                              (decode-coding-string content 'utf-8))))))))
     ;; We also store the raw chunk in the response buffer itself
     (when (buffer-live-p (process-buffer proc))
       (with-current-buffer (process-buffer proc)
         (ai-agent--insert-at-marker-in-current-buffer (process-mark proc) string)))))
-
-(defun ai-agent--check-idle-sessions (conv-buf)
-  "Kill sessions in CONV-BUF that have been idle >10s, and stop timer if no remain."
-  (when (buffer-live-p conv-buf)
-    (with-current-buffer conv-buf
-      (setq ai-agent-active-session-timers
-            (cl-remove-if
-             (lambda (entry)
-               (let ((b (car entry))
-                     (t0 (cdr entry)))
-                 (unless (and (buffer-live-p b)
-                              (< (- (float-time) t0) ai-agent--url-retrieve-sessions-timers))
-                   ;; delete process + buffer
-                   (let ((proc (get-buffer-process b)))
-                     (when (process-live-p proc)
-                       ;; The url-retrieve sentinel has trouble parsing headers, and we don't need them, so we can just
-                       ;; remove it.
-                       (set-process-sentinel proc #'ignore)
-                       (delete-process proc)))
-                   (kill-buffer b)
-                   t)))       ; remove from list
-             ai-agent-active-session-timers))
-      (when (null ai-agent-active-session-timers)
-        (cancel-timer ai-agent-check-timer)
-        (setq ai-agent-check-timer nil)))))
 
 (defun ai-agent-tell (&optional buffer)
   "Send to the AI agent the contents of BUFFER (defaults current buffer)."
@@ -444,16 +433,9 @@ If nil, insert to the last buffer in `ai-agent-mode' instead."
       (set-process-filter proc (ai-agent--append-streamed-conversation-filter conv-buf))
 
       ;; After the first message, rename conversation
-      (when (< (length messages) 3)
+      (when (or (string-prefix-p "*AI conversation*" (buffer-name))
+                (< (length messages) 3))
         (ai-agent-rename-buffer-from-summary conv-buf messages))
-
-      ;; Start timer if needed
-      (unless ai-agent-check-timer
-        (setq ai-agent-check-timer
-              (run-at-time 9 10 #'ai-agent--check-idle-sessions (current-buffer))))
-
-      ;; Add session to the alist
-      (push (cons response-buffer (float-time)) ai-agent-active-session-timers)
 
       (pop-to-buffer (current-buffer)))))
 
