@@ -140,15 +140,13 @@ It should describe the environment and how the AI can interact with it."
 (defvar ai-agent-buffer-prefix "*AI agent*"
   "Prefix for all AI agent conversation buffers.")
 
+(defvar ai-agent-mode-map (make-sparse-keymap)
+  "Minor mode map for ai-agent.el.")
+
 (define-minor-mode ai-agent-mode
   "Minor mode for AI Agent conversation buffers."
   :init-value nil
   :lighter " AI-Agent"
-  :keymap (let ((map (make-sparse-keymap)))
-            (define-key map (kbd "C-c C-c") #'ai-agent-tell)
-            (define-key map (kbd "C-c g") #'ai-agent-interrupt)
-            (define-key map (kbd "C-c b") #'ai-agent-insert-buffer-contents-with-line-numbers)
-            map)
   (if ai-agent-mode
       (progn
         (setq truncate-lines nil)
