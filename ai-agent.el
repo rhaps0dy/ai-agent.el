@@ -321,8 +321,8 @@ If there are no AI-agent mode buffers visible, it creates a new one."
              (lambda (entry)
                (let ((b (car entry))
                      (t0 (cdr entry)))
-                 (when (and (buffer-live-p b)
-                            (> (- (float-time) t0) ai-agent--url-retrieve-sessions-timers))
+                 (unless (and (buffer-live-p b)
+                              (< (- (float-time) t0) ai-agent--url-retrieve-sessions-timers))
                    ;; delete process + buffer
                    (let ((proc (get-buffer-process b)))
                      (when (process-live-p proc)
@@ -393,7 +393,7 @@ If there are no AI-agent mode buffers visible, it creates a new one."
       ;; Start timer if needed
       (unless ai-agent-check-timer
         (setq ai-agent-check-timer
-              (run-at-time 3 3 #'ai-agent--check-idle-sessions (current-buffer))))
+              (run-at-time 9 10 #'ai-agent--check-idle-sessions (current-buffer))))
 
       ;; Add session to the alist
       (push (cons response-buffer (float-time)) ai-agent-active-session-timers)
