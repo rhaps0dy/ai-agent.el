@@ -405,15 +405,26 @@ If nil, insert to the last buffer in `ai-agent-mode' instead."
             ;; Insert the content if it exists
             (when content
               (with-current-buffer conv-buf
-                ;; Update last activity
-                (setf (alist-get (process-buffer proc) ai-agent-active-session-timers)
-                      (float-time))
                 (ai-agent--insert-at-marker-in-current-buffer ai-agent-conversation-marker
                                                               (decode-coding-string content 'utf-8))))))))
     ;; We also store the raw chunk in the response buffer itself
     (when (buffer-live-p (process-buffer proc))
       (with-current-buffer (process-buffer proc)
         (ai-agent--insert-at-marker-in-current-buffer (process-mark proc) string)))))
+
+(defun ai-agent-collect-messages ()
+  "Collect top-level headers and their contents to form messages."
+  (apply #'vector
+         (org-map-entries
+          (lambda ()
+            (let* ((header (nth 4 (org-heading-components)))
+                   (prefix (cond
+                            ((string-prefix-p "User" header) "user")
+                            ((string-prefix-p "Assistant" header) "assistant")
+                            ((string-prefix-p "System" header) "system")))
+                   (content (org-get-entry)))
+              `(("role" . ,prefix) ("content" . ,content))))
+          "LEVEL=1" nil)))
 
 (defun ai-agent-tell (&optional buffer)
   "Send to the AI agent the contents of BUFFER (defaults current buffer)."
@@ -433,32 +444,29 @@ If nil, insert to the last buffer in `ai-agent-mode' instead."
     ;; This way the user cursor will advance.
     (insert "\n* User\n")
 
-    ;; Collect top-level headers and their contents
-    (let* ((messages
-            (apply #'vector
-                   (org-map-entries
-                    (lambda ()
-                      (let* ((header (nth 4 (org-heading-components)))
-                             (prefix (cond
-                                      ((string-prefix-p "User" header) "user")
-                                      ((string-prefix-p "Assistant" header) "assistant")
-                                      ((string-prefix-p "System" header) "system")))
-                             (content (org-get-entry)))
-                        `(("role" . ,prefix) ("content" . ,content))))
-                    "LEVEL=1" nil)))
-           (url (concat ai-agent-openai-url "/chat/completions"))
+    ;; Get provider details from the alist
+    (let* ((provider-info (cdr (assoc ai-agent--current-provider ai-agent-model-provider-alist)))
+           (models (assoc 'models provider-info))
+           (model-name (cdr (assoc ai-agent--current-model models)))
+           (url (concat (cdr (assoc 'url provider-info)) "/chat/completions"))
+           (api-key (cdr (assoc 'key provider-info)))
+           (api-style (cdr (assoc 'api-style provider-info)))
            (url-request-method "POST")
            (url-request-extra-headers
             `(("Content-Type" . "application/json; charset=utf-8")
-              ;; Mysteriously we need to manually re-encode the openai key in ascii, otherwise when concatenated with the rest
-              ;; of the request the string becomes multi-byte.
-              ("Authorization" . ,(format "Bearer %s" (encode-coding-string ai-agent-openai-key 'ascii)))))
+              . ,(cond ((eq api-style 'openai)
+                        `(("Authorization" . ,(format "Bearer %s" (encode-coding-string api-key 'ascii)))))
+                       ((eq api-style 'anthropic)
+                        `(("x-api-key" . (encode-coding-string api-key 'ascii))
+                          ("anthropic-version" . "2023-06-01")))
+                       (t (error "AI agent: unknown api-style `%s'" api-style)))))
+           (messages (ai-agent-collect-messages))
            (url-request-data
             (encode-coding-string
              (json-encode
               `(("messages" . ,messages)
                 ("stream" . t)
-                ("model" . ,ai-agent-default-model)))
+                ("model" . ,model-name)))
              'utf-8 t))
            (response-buffer (url-retrieve url
                                           (lambda (status)
