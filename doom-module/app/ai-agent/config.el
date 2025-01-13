@@ -2,7 +2,8 @@
 ;;;
 
 (use-package! ai-agent
-  :config
+  :defer t
+  :init
   (map!
    :map ai-agent-mode-map
    :localleader
