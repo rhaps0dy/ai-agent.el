@@ -495,7 +495,7 @@ If nil, insert to the last buffer in `ai-agent-mode' instead."
            messages)))
     (ai-agent-chat
      "gpt-4o"
-     `[(("role" . "system") ("content" . "Please describe the request made in the following conversation, in 1-5 words."))
+     `[(("role" . "system") ("content" . "Please describe the following conversation, in 1-5 words. If the conversation is about a request, please prioritize that in the summary. Otherwise just summarize whatever you think is most relevant."))
        (("role" . "user") ("content" . ,(format "The conversation: %s" conversation)))]
      (lambda (new-name)
        (ai-agent-rename-conversation-buffer
