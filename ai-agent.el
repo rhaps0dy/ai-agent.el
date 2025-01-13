@@ -256,22 +256,20 @@ SYSTEM-PROMPT defaults to `ai-agent-default-system-prompt'."
                       (window-list))))
     (if open-window (window-buffer open-window) (ai-agent-focus-new-conversation))))
 
+(defun ai-agent--ensure-newline ()
+  "If point is not in a fresh line, insert a line after the point."
+  (unless (= (line-beginning-position) (point))
+    (goto-char (line-end-position))
+    (insert ?\n)))
+
 (defun ai-agent-insert-code-region (start end &optional target-buffer)
-  "Create an AI prompt for the selected code region between START and END.
-If there are no AI-agent mode buffers visible, it creates a new one."
+  "Add the selected code region (START to END) as an Org code block.
+
+If specified, add the region to the TARGET-BUFFER. If TARGET-BUFFER is nil, and
+there is an AI-agent mode buffer visible, use that one; otherwise create a new
+one."
   (interactive "r")
-  (let* ((unescaped-code (buffer-substring-no-properties start end))
-         (code (replace-regexp-in-string "^#\\+[Ee][Nn][Dd]_[Ss][Rr][Cc]" ",#+end_src" unescaped-code))
-         ;; (line-start (line-number-at-pos start))
-         ;; (line-numbered-code (with-temp-buffer
-         ;;                       (insert code)
-         ;;                       (goto-char (point-min))
-         ;;                       (let ((line-number line-start))
-         ;;                         (while (not (eobp))
-         ;;                           (insert (format "%d| " line-number))
-         ;;                           (setq line-number (1+ line-number))
-         ;;                           (forward-line 1)))
-         ;;                       (buffer-string)))
+  (let* ((code (buffer-substring-no-properties start end))
          (target-buffer (or target-buffer (ai-agent-choose-target-buffer)))
          (file-name (when buffer-file-name
                       (file-relative-name
@@ -282,13 +280,20 @@ If there are no AI-agent mode buffers visible, it creates a new one."
          (code-language (replace-regexp-in-string "-mode\\'" "" (symbol-name major-mode))))
 
     (with-current-buffer target-buffer
-      (goto-char (point-max))
-      (insert (format "#+begin_src %s %s\n%s#+end_src\n" code-language
-                      (if file-name
-                          (format ":file %s" file-name)
-                        (format ":buffer %s" buffer-name))
-                      code))))
-  (pulse-momentary-highlight-region start end))
+      (ai-agent--ensure-newline)
+      (let ((drawer-marker (point-marker)))
+        (insert (format "#+begin_src %s %s\n" code-language
+                        (if file-name
+                            (format ":file %s" file-name)
+                          (format ":buffer %s" buffer-name))))
+        (insert code)
+        (ai-agent--ensure-newline)
+        (insert "#+end_src\n")
+        (save-excursion
+          (goto-char drawer-marker)
+          ;; Close the newly-inserted drawer
+          (org-cycle))))
+    (pulse-momentary-highlight-region start end)))
 
 ;;;###autoload
 (defun ai-agent-insert-code-defun (&optional target-buffer)
